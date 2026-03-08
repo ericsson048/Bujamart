@@ -1,28 +1,44 @@
+﻿import clsx from 'clsx';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import clsx from 'clsx';
+
+import { api } from '../services/api';
+import { clearCurrentUser, getCurrentUser } from '../services/auth';
 
 export default function AdminLayout() {
   const location = useLocation();
+  const currentUser = getCurrentUser();
+
+  async function handleLogout() {
+    const refreshToken = localStorage.getItem('bujamart_refresh_token');
+    if (refreshToken) {
+      try {
+        await api.logout({ refresh_token: refreshToken });
+      } catch {
+        // ignore
+      }
+    }
+    clearCurrentUser();
+  }
 
   const navigation = [
     { name: 'Tableau de bord', href: '/admin', icon: 'dashboard' },
     { name: 'Produits', href: '/admin/products', icon: 'inventory_2' },
     { name: 'Commandes', href: '/admin/orders', icon: 'shopping_bag' },
     { name: 'Clients', href: '/admin/customers', icon: 'group' },
-    { name: 'Paramètres', href: '/admin/settings', icon: 'settings' },
+    { name: 'Parametres', href: '/admin/settings', icon: 'settings' },
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex font-display">
-      {/* Sidebar */}
-      <aside className="w-64 bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 hidden md:flex flex-col">
-        <div className="h-16 flex items-center px-6 border-b border-slate-200 dark:border-slate-700">
-          <Link to="/" className="flex items-center gap-2 text-primary">
-            <span className="material-symbols-outlined text-2xl font-bold">shopping_basket</span>
-            <span className="text-xl font-bold text-slate-900 dark:text-white">Bujamart Admin</span>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,#1e293b_0%,#0f172a_45%,#020617_100%)] text-slate-100 font-display md:grid md:grid-cols-[280px_1fr]">
+      <aside className="hidden md:flex md:flex-col border-r border-white/10 bg-white/5 backdrop-blur-xl">
+        <div className="border-b border-white/10 px-6 py-5">
+          <Link to="/" className="inline-flex items-center gap-2 text-primary font-black text-xl">
+            <span className="material-symbols-outlined">shopping_basket</span>
+            Bujamart Admin
           </Link>
         </div>
-        <nav className="flex-1 p-4 space-y-1">
+
+        <nav className="flex-1 p-4 space-y-1.5">
           {navigation.map((item) => {
             const isActive = location.pathname === item.href;
             return (
@@ -30,10 +46,10 @@ export default function AdminLayout() {
                 key={item.name}
                 to={item.href}
                 className={clsx(
-                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                  'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-colors',
                   isActive
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white'
+                    ? 'bg-primary text-white shadow-lg shadow-primary/25'
+                    : 'text-slate-300 hover:bg-white/10 hover:text-white'
                 )}
               >
                 <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
@@ -42,28 +58,42 @@ export default function AdminLayout() {
             );
           })}
         </nav>
-        <div className="p-4 border-t border-slate-200 dark:border-slate-700">
-          <Link to="/" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-colors">
-            <span className="material-symbols-outlined text-[20px]">logout</span>
-            Retour au site
+
+        <div className="border-t border-white/10 p-4 space-y-3">
+          <div className="rounded-xl bg-white/5 p-3">
+            <p className="text-xs text-slate-400">Connecte</p>
+            <p className="truncate text-sm font-bold text-white">{currentUser?.full_name ?? 'Admin'}</p>
+            <p className="truncate text-xs text-slate-400">{currentUser?.email ?? ''}</p>
+          </div>
+          <Link
+            to="/login"
+            onClick={() => void handleLogout()}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-100 hover:bg-white/10"
+          >
+            <span className="material-symbols-outlined text-[18px]">logout</span>
+            Se deconnecter
           </Link>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Mobile Header */}
-        <header className="md:hidden h-16 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-4">
-          <Link to="/" className="flex items-center gap-2 text-primary">
-            <span className="material-symbols-outlined text-2xl font-bold">shopping_basket</span>
-            <span className="font-bold text-slate-900 dark:text-white">Bujamart Admin</span>
-          </Link>
-          <button className="p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">
-            <span className="material-symbols-outlined">menu</span>
-          </button>
+      <div className="min-w-0 flex flex-col">
+        <header className="md:hidden border-b border-white/10 bg-white/5 px-4 py-3 backdrop-blur-xl">
+          <div className="flex items-center justify-between">
+            <Link to="/" className="inline-flex items-center gap-2 text-primary font-bold">
+              <span className="material-symbols-outlined">shopping_basket</span>
+              Admin
+            </Link>
+            <Link
+              to="/login"
+              onClick={() => void handleLogout()}
+              className="rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold"
+            >
+              Logout
+            </Link>
+          </div>
         </header>
 
-        <main className="flex-1 p-4 md:p-8 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto p-4 md:p-8">
           <Outlet />
         </main>
       </div>

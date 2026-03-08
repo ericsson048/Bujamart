@@ -1,122 +1,339 @@
-import { useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+
+import { api, type Product } from '../../services/api';
+
+function formatBif(value: number) {
+  return `${new Intl.NumberFormat('fr-FR').format(value)} BIF`;
+}
+
+type ProductForm = {
+  name: string;
+  description: string;
+  price: string;
+  stock: string;
+  image_url: string;
+};
+
+const initialForm: ProductForm = {
+  name: '',
+  description: '',
+  price: '',
+  stock: '',
+  image_url: '',
+};
 
 export default function AdminProducts() {
+  const [products, setProducts] = useState<Product[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
 
-  const products = [
-    { id: 1, name: 'Sac de riz 25kg', category: 'Alimentation', price: '75,000 Fbu', stock: 45, status: 'En Stock' },
-    { id: 2, name: 'Huile de palme 5L', category: 'Alimentation', price: '30,000 Fbu', stock: 12, status: 'Faible' },
-    { id: 3, name: 'Smartphone Pro Max', category: 'Électronique', price: '850,000 Fbu', stock: 8, status: 'En Stock' },
-    { id: 4, name: 'Panier Légumes Bio', category: 'Frais', price: '15,000 Fbu', stock: 0, status: 'Rupture' },
-    { id: 5, name: 'Montre Connectée', category: 'Accessoires', price: '45,000 Fbu', stock: 23, status: 'En Stock' },
-  ];
+  const [createForm, setCreateForm] = useState<ProductForm>(initialForm);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [editForm, setEditForm] = useState<ProductForm>(initialForm);
+
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  async function loadProducts() {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await api.listProducts(false);
+      setProducts(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur chargement produits');
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadProducts();
+  }, []);
+
+  const filtered = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    return products.filter((product) => {
+      const matchesTerm =
+        !term ||
+        product.name.toLowerCase().includes(term) ||
+        (product.description ?? '').toLowerCase().includes(term);
+
+      const matchesStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'active' && product.is_active) ||
+        (statusFilter === 'inactive' && !product.is_active);
+
+      return matchesTerm && matchesStatus;
+    });
+  }, [products, searchTerm, statusFilter]);
+
+  function openEdit(product: Product) {
+    setEditingProduct(product);
+    setEditForm({
+      name: product.name,
+      description: product.description ?? '',
+      price: String(product.price),
+      stock: String(product.stock),
+      image_url: product.image_url ?? '',
+    });
+    setError(null);
+    setSuccess(null);
+  }
+
+  async function handleCreateProduct(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setIsCreating(true);
+
+    try {
+      await api.createProduct({
+        name: createForm.name,
+        description: createForm.description || null,
+        image_url: createForm.image_url || null,
+        price: Number(createForm.price),
+        stock: Number(createForm.stock),
+      });
+      setCreateForm(initialForm);
+      setSuccess('Produit ajoute au catalogue.');
+      await loadProducts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Creation impossible');
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  async function handleSaveEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!editingProduct) {
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+    setIsSavingEdit(true);
+
+    try {
+      await api.updateProduct(editingProduct.id, {
+        name: editForm.name,
+        description: editForm.description || null,
+        image_url: editForm.image_url || null,
+        price: Number(editForm.price),
+        stock: Number(editForm.stock),
+      });
+      setSuccess('Produit mis a jour.');
+      setEditingProduct(null);
+      await loadProducts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Mise a jour impossible');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }
+
+  async function handleToggleActive(product: Product) {
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await api.updateProduct(product.id, { is_active: !product.is_active });
+      setSuccess(product.is_active ? 'Produit desactive.' : 'Produit reactive.');
+      await loadProducts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Action impossible');
+    }
+  }
+
+  async function handleArchive(product: Product) {
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await api.archiveProduct(product.id);
+      setSuccess('Produit archive du catalogue.');
+      await loadProducts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Suppression impossible');
+    }
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Produits</h1>
-          <p className="text-slate-500 dark:text-slate-400">Gérez votre catalogue de produits.</p>
-        </div>
-        <button className="flex items-center justify-center gap-2 bg-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-primary/90 transition-colors">
-          <span className="material-symbols-outlined">add</span>
-          Ajouter un produit
+      <div>
+        <h1 className="text-2xl md:text-3xl font-black text-white">Catalogue produits</h1>
+        <p className="text-sm text-slate-300">Gestion complete: ajout, edition, activation et archivage.</p>
+      </div>
+
+      {error && <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">{error}</p>}
+      {success && <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">{success}</p>}
+
+      <form className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-xl grid grid-cols-1 gap-3 lg:grid-cols-6" onSubmit={handleCreateProduct}>
+        <input
+          className="rounded-xl border border-white/15 bg-slate-900/40 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-primary lg:col-span-2"
+          placeholder="Nom du produit"
+          value={createForm.name}
+          onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
+          required
+        />
+        <input
+          className="rounded-xl border border-white/15 bg-slate-900/40 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-primary"
+          placeholder="Prix"
+          type="number"
+          min={1}
+          value={createForm.price}
+          onChange={(e) => setCreateForm((prev) => ({ ...prev, price: e.target.value }))}
+          required
+        />
+        <input
+          className="rounded-xl border border-white/15 bg-slate-900/40 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-primary"
+          placeholder="Stock"
+          type="number"
+          min={0}
+          value={createForm.stock}
+          onChange={(e) => setCreateForm((prev) => ({ ...prev, stock: e.target.value }))}
+          required
+        />
+        <input
+          className="rounded-xl border border-white/15 bg-slate-900/40 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-primary lg:col-span-2"
+          placeholder="URL image (optionnel)"
+          value={createForm.image_url}
+          onChange={(e) => setCreateForm((prev) => ({ ...prev, image_url: e.target.value }))}
+        />
+        <input
+          className="rounded-xl border border-white/15 bg-slate-900/40 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-primary lg:col-span-5"
+          placeholder="Description (optionnel)"
+          value={createForm.description}
+          onChange={(e) => setCreateForm((prev) => ({ ...prev, description: e.target.value }))}
+        />
+        <button type="submit" className="rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white hover:brightness-110 disabled:opacity-60" disabled={isCreating}>
+          {isCreating ? 'Ajout...' : 'Ajouter'}
         </button>
+      </form>
+
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-xl grid grid-cols-1 gap-3 md:grid-cols-3">
+        <input
+          type="text"
+          placeholder="Rechercher un produit..."
+          className="w-full rounded-xl border border-white/15 bg-slate-900/40 px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:border-primary md:col-span-2"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+        <select
+          className="rounded-xl border border-white/15 bg-slate-900/40 px-3 py-2 text-sm text-white outline-none focus:border-primary"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
+        >
+          <option value="all">Tous</option>
+          <option value="active">Actifs</option>
+          <option value="inactive">Inactifs</option>
+        </select>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row gap-4">
-        <div className="flex-1 relative">
-          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
+      {editingProduct && (
+        <form className="rounded-2xl border border-primary/30 bg-primary/10 p-4 backdrop-blur-xl grid grid-cols-1 gap-3 lg:grid-cols-6" onSubmit={handleSaveEdit}>
+          <h2 className="lg:col-span-6 text-sm font-bold uppercase tracking-wider text-primary">Edition produit</h2>
           <input
-            type="text"
-            placeholder="Rechercher un produit..."
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-primary/50 outline-none text-sm"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            className="rounded-xl border border-white/20 bg-slate-900/40 px-3 py-2 text-sm text-white outline-none focus:border-primary lg:col-span-2"
+            value={editForm.name}
+            onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))}
+            required
           />
-        </div>
-        <div className="flex gap-2">
-          <select className="px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm outline-none">
-            <option>Toutes les catégories</option>
-            <option>Alimentation</option>
-            <option>Électronique</option>
-            <option>Frais</option>
-          </select>
-          <select className="px-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm outline-none">
-            <option>Statut</option>
-            <option>En Stock</option>
-            <option>Faible Stock</option>
-            <option>Rupture</option>
-          </select>
-        </div>
-      </div>
+          <input
+            className="rounded-xl border border-white/20 bg-slate-900/40 px-3 py-2 text-sm text-white outline-none focus:border-primary"
+            type="number"
+            min={1}
+            value={editForm.price}
+            onChange={(e) => setEditForm((prev) => ({ ...prev, price: e.target.value }))}
+            required
+          />
+          <input
+            className="rounded-xl border border-white/20 bg-slate-900/40 px-3 py-2 text-sm text-white outline-none focus:border-primary"
+            type="number"
+            min={0}
+            value={editForm.stock}
+            onChange={(e) => setEditForm((prev) => ({ ...prev, stock: e.target.value }))}
+            required
+          />
+          <input
+            className="rounded-xl border border-white/20 bg-slate-900/40 px-3 py-2 text-sm text-white outline-none focus:border-primary lg:col-span-2"
+            value={editForm.image_url}
+            onChange={(e) => setEditForm((prev) => ({ ...prev, image_url: e.target.value }))}
+            placeholder="URL image"
+          />
+          <input
+            className="rounded-xl border border-white/20 bg-slate-900/40 px-3 py-2 text-sm text-white outline-none focus:border-primary lg:col-span-4"
+            value={editForm.description}
+            onChange={(e) => setEditForm((prev) => ({ ...prev, description: e.target.value }))}
+            placeholder="Description"
+          />
+          <button type="submit" className="rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white hover:brightness-110 disabled:opacity-60" disabled={isSavingEdit}>
+            {isSavingEdit ? 'Sauvegarde...' : 'Sauvegarder'}
+          </button>
+          <button type="button" onClick={() => setEditingProduct(null)} className="rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-100 hover:bg-white/10">
+            Annuler
+          </button>
+        </form>
+      )}
 
-      {/* Products Table */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
-              <tr>
-                <th className="px-6 py-4 font-medium">
-                  <input type="checkbox" className="rounded border-slate-300 text-primary focus:ring-primary" />
-                </th>
-                <th className="px-6 py-4 font-medium">Produit</th>
-                <th className="px-6 py-4 font-medium">Catégorie</th>
-                <th className="px-6 py-4 font-medium">Prix</th>
-                <th className="px-6 py-4 font-medium">Stock</th>
-                <th className="px-6 py-4 font-medium">Statut</th>
-                <th className="px-6 py-4 font-medium text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-              {products.map((product) => (
-                <tr key={product.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors group">
-                  <td className="px-6 py-4">
-                    <input type="checkbox" className="rounded border-slate-300 text-primary focus:ring-primary" />
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="size-10 bg-slate-100 dark:bg-slate-700 rounded-lg"></div>
-                      <span className="font-medium text-slate-900 dark:text-white">{product.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{product.category}</td>
-                  <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">{product.price}</td>
-                  <td className="px-6 py-4 text-slate-600 dark:text-slate-300">{product.stock}</td>
-                  <td className="px-6 py-4">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
-                      ${product.status === 'En Stock' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' :
-                        product.status === 'Faible' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' :
-                        'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                      }`}>
-                      {product.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button className="p-1 text-slate-400 hover:text-primary transition-colors">
-                        <span className="material-symbols-outlined text-[20px]">edit</span>
-                      </button>
-                      <button className="p-1 text-slate-400 hover:text-red-500 transition-colors">
-                        <span className="material-symbols-outlined text-[20px]">delete</span>
-                      </button>
-                    </div>
-                  </td>
+      {isLoading && <p className="text-slate-300">Chargement...</p>}
+
+      {!isLoading && (
+        <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="text-slate-400">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Produit</th>
+                  <th className="px-5 py-3 font-medium">Prix</th>
+                  <th className="px-5 py-3 font-medium">Stock</th>
+                  <th className="px-5 py-3 font-medium">Statut</th>
+                  <th className="px-5 py-3 font-medium">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {/* Pagination */}
-        <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
-          <p className="text-sm text-slate-500 dark:text-slate-400">Affichage de 1 à 5 sur 24 produits</p>
-          <div className="flex gap-2">
-            <button className="px-3 py-1 border border-slate-200 dark:border-slate-700 rounded-lg text-sm disabled:opacity-50" disabled>Précédent</button>
-            <button className="px-3 py-1 border border-slate-200 dark:border-slate-700 rounded-lg text-sm hover:bg-slate-50 dark:hover:bg-slate-700">Suivant</button>
+              </thead>
+              <tbody>
+                {filtered.map((product) => (
+                  <tr key={product.id} className="border-t border-white/5 text-slate-200 align-top">
+                    <td className="px-5 py-3">
+                      <p className="font-semibold text-white">{product.name}</p>
+                      {product.description && <p className="mt-1 text-xs text-slate-400 line-clamp-2">{product.description}</p>}
+                    </td>
+                    <td className="px-5 py-3">{formatBif(product.price)}</td>
+                    <td className="px-5 py-3">
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${product.stock <= 5 ? 'bg-amber-500/20 text-amber-200' : 'bg-emerald-500/20 text-emerald-200'}`}>
+                        {product.stock}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${product.is_active ? 'bg-emerald-500/20 text-emerald-200' : 'bg-slate-500/30 text-slate-300'}`}>
+                        {product.is_active ? 'Actif' : 'Inactif'}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3">
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => openEdit(product)} className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-slate-100 hover:bg-white/10">
+                          Modifier
+                        </button>
+                        <button type="button" onClick={() => void handleToggleActive(product)} className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-slate-100 hover:bg-white/10">
+                          {product.is_active ? 'Desactiver' : 'Activer'}
+                        </button>
+                        <button type="button" onClick={() => void handleArchive(product)} className="rounded-lg border border-red-400/40 bg-red-500/10 px-2.5 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/20">
+                          Archiver
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+          {filtered.length === 0 && <p className="px-5 py-4 text-sm text-slate-400">Aucun produit trouve.</p>}
         </div>
-      </div>
+      )}
     </div>
   );
 }
