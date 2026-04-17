@@ -1,7 +1,10 @@
 import smtplib
+import logging
 from email.message import EmailMessage
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _can_send() -> bool:
@@ -18,11 +21,15 @@ def send_email(to_email: str, subject: str, body: str) -> None:
     message["To"] = to_email
     message.set_content(body)
 
-    with smtplib.SMTP(settings.email_host, settings.email_port, timeout=30) as smtp:
-        if settings.email_use_tls:
-            smtp.starttls()
-        smtp.login(settings.email_host_user, settings.email_host_password)
-        smtp.send_message(message)
+    try:
+        with smtplib.SMTP(settings.email_host, settings.email_port, timeout=30) as smtp:
+            if settings.email_use_tls:
+                smtp.starttls()
+            smtp.login(settings.email_host_user, settings.email_host_password)
+            smtp.send_message(message)
+    except Exception as exc:
+        # Emails are non-critical for core API flows (register/checkout); log and continue.
+        logger.warning("Email delivery failed for %s: %s", to_email, exc)
 
 
 def send_welcome_email(to_email: str, full_name: str) -> None:
@@ -47,4 +54,3 @@ def send_order_confirmation_email(to_email: str, amount_text: str) -> None:
         subject="Confirmation de commande Bujamart",
         body=f"Votre commande a été confirmée. Montant payé: {amount_text}.",
     )
-

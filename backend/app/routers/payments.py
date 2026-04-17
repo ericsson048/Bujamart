@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 import stripe
 from sqlalchemy import select
@@ -6,14 +8,30 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.config import settings
 from app.db import get_db
 from app.email_service import send_order_confirmation_email
-from app.models import Order
+from app.models import Order, Product
 from app.security import get_current_user
 from app.schemas import PaymentCheckoutRequest, PaymentCheckoutResponse
 
 router = APIRouter(prefix="/payments", tags=["payments"])
+logger = logging.getLogger(__name__)
 
 if settings.stripe_secret_key:
     stripe.api_key = settings.stripe_secret_key
+
+
+def _cancel_failed_checkout_order(db: Session, order: Order) -> None:
+    # Restore product stock only once to avoid double increments on retries.
+    if order.status != "cancelled":
+        for item in order.items:
+            product = db.get(Product, item.product_id)
+            if product is not None:
+                product.stock += item.quantity
+                db.add(product)
+    order.status = "cancelled"
+    order.payment_status = "failed"
+    order.payment_provider = "stripe"
+    db.add(order)
+    db.commit()
 
 
 @router.post("/checkout-session", response_model=PaymentCheckoutResponse)
@@ -39,23 +57,38 @@ def create_checkout_session(
     if order.payment_status == "paid":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Commande déjà payée.")
 
-    session = stripe.checkout.Session.create(
-        mode="payment",
-        success_url=payload.success_url,
-        cancel_url=payload.cancel_url,
-        customer_email=order.customer.email,
-        line_items=[
-            {
-                "price_data": {
-                    "currency": "bif",
-                    "product_data": {"name": f"Commande Bujamart #{order.id}"},
-                    "unit_amount": int(float(order.total_amount) * 100),
-                },
-                "quantity": 1,
-            }
-        ],
-        metadata={"order_id": str(order.id)},
-    )
+    try:
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            success_url=payload.success_url,
+            cancel_url=payload.cancel_url,
+            customer_email=order.customer.email,
+            line_items=[
+                {
+                    "price_data": {
+                        "currency": "bif",
+                        "product_data": {"name": f"Commande Bujamart #{order.id}"},
+                        "unit_amount": int(float(order.total_amount) * 100),
+                    },
+                    "quantity": 1,
+                }
+            ],
+            metadata={"order_id": str(order.id)},
+        )
+    except stripe.error.APIConnectionError:
+        logger.exception("Stripe API connection error while creating checkout session for order_id=%s", order.id)
+        _cancel_failed_checkout_order(db, order)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Impossible de contacter Stripe pour le moment.",
+        )
+    except stripe.error.StripeError:
+        logger.exception("Stripe error while creating checkout session for order_id=%s", order.id)
+        _cancel_failed_checkout_order(db, order)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Erreur Stripe lors de la création de la session de paiement.",
+        )
 
     order.payment_provider = "stripe"
     order.payment_reference = session.id
@@ -97,4 +130,3 @@ async def stripe_webhook(
             send_order_confirmation_email(order.customer.email, f"{order.total_amount} BIF")
 
     return {"status": "ok"}
-
